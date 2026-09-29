@@ -1,0 +1,46 @@
+# --- secrets & local env (NEVER commit) ---
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# --- python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- databases (local artifacts, never source) ---
+*.db
+*.sqlite
+*.sqlite3
+_shots.db
+backend/_shots.db
+
+# --- node / frontend build ---
+node_modules/
+dist/
+.vite/
+*.local
+playwright-report/
+test-results/
+
+# --- uploaded media (progress photos) ---
+media/
+backend/media/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# typescript build cache
+*.tsbuildinfo
