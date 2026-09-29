@@ -1,0 +1,8 @@
+.env
+*.db
+*.sqlite*
+__pycache__/
+.pytest_cache/
+media/
+tests/
+_seed_today.py
