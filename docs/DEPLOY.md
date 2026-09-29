@@ -22,7 +22,7 @@ Browser ──► Vercel (static SPA)
 
 ## 0. Prerequisites
 
-- A GitHub account (repo will be public: `trinity`)
+- A GitHub account
 - A Vercel account (sign in with GitHub)
 - A Render account (sign in with GitHub)
 - Git installed locally
@@ -31,28 +31,27 @@ Browser ──► Vercel (static SPA)
 
 ## 1. Push the code to GitHub
 
-### 1.1 Set your git identity (once per machine)
+> **This repository is already initialised and committed.** `main` contains a
+> single squashed initial commit plus a docs fix. There is **no remote yet** —
+> you only need to create the GitHub repo and push.
 
-```bash
-git config --global user.name  "Your Name"
-git config --global user.email "you@example.com"
-```
-
-### 1.2 Create the repo on GitHub
+### 1.1 Create the repo on GitHub
 
 GitHub → **New repository** → name `trinity` → **Public** → do **not** add a
 README/.gitignore/license (the repo already has them) → **Create**.
 
-### 1.3 Initialise and push
+### 1.2 Point the local repo at it and push
 
 ```bash
 cd /c/Users/kohja/trinity
-git init -b main
-git add .
-git status                 # sanity-check: NO .env file listed
-git commit -m "TRINITY: initial commit"
 git remote add origin https://github.com/<your-username>/trinity.git
 git push -u origin main
+```
+
+Sanity check before pushing (should print **nothing**):
+
+```bash
+git ls-files | grep -E '(^|/)\.env$|(^|/)media/'
 ```
 
 > If `git push` asks for a password, GitHub no longer accepts account
@@ -60,7 +59,8 @@ git push -u origin main
 > settings → Personal access tokens → Tokens (classic) → scope `repo`) and paste
 > it as the password. No SSH key is set up on this machine.
 
-**Never commit `.env`.** The included `.gitignore` already excludes it.
+**Never commit `.env`.** The included `.gitignore` already excludes it; only the
+`.env.example` templates (placeholders only) are tracked.
 
 ---
 
@@ -110,6 +110,9 @@ Check `https://<service-name>.onrender.com/health` → `{"status":"ok"}`.
    (already pinned in `frontend/vercel.json`).
 4. **Environment Variables** → add:
    - `VITE_API_BASE` = `https://<service-name>.onrender.com/api/v1`
+
+   > The variable is **`VITE_API_BASE`** (read by `frontend/src/lib/api.ts`).
+   > Not `VITE_API_BASE_URL`. Include the `/api/v1` suffix.
 5. **Deploy**.
 
 `frontend/vercel.json` also rewrites every path to `index.html` so client-side
@@ -150,6 +153,25 @@ DATABASE_URL='postgresql+psycopg://...external...' python seed_demo.py
 
 ---
 
+## Environment variable reference
+
+Names must match `backend/app/core/config.py` (`Settings`) exactly.
+
+| Variable | Used by | Notes |
+|----------|---------|-------|
+| `ENV` | backend | `production` on Render |
+| `SECRET_KEY` | backend | long random string |
+| `ACCESS_TOKEN_MINUTES` | backend | default 30 |
+| `REFRESH_TOKEN_DAYS` | backend | default 30 |
+| `DATABASE_URL` | backend | managed by Render |
+| `CORS_ORIGINS` | backend | comma-separated, no spaces |
+| `USDA_API_KEY` | backend | optional |
+| `MEDIA_ROOT` | backend | progress-photo dir |
+| `REDIS_URL` | backend | optional / unused in prod |
+| `VITE_API_BASE` | frontend (build-time) | full API base incl. `/api/v1` |
+
+---
+
 ## Notes & limitations
 
 - **Free Postgres expires** after ~30 days on Render; upgrade or re-create.
@@ -158,3 +180,5 @@ DATABASE_URL='postgresql+psycopg://...external...' python seed_demo.py
   point `MEDIA_ROOT` at its mount path for durable storage.
 - **Free web services sleep** after 15 min idle; the first request takes ~30 s.
 - **Redis** is unused in this setup; leave `REDIS_URL` unset.
+- `VITE_*` variables are inlined at **build time**. After changing
+  `VITE_API_BASE` you must **redeploy** the Vercel project for it to take effect.
