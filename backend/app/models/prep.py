@@ -25,6 +25,10 @@ class PreparationPhase(Base, TimestampMixin):
     target_weight_kg: Mapped[float | None] = mapped_column(Numeric(5, 2))
     # Target rate as a percentage of bodyweight per week (e.g. -0.5 = lose 0.5%/wk).
     target_rate_pct_per_week: Mapped[float | None] = mapped_column(Numeric(4, 2))
+    # How long the phase is planned to run. A prep block is measured in weeks, so
+    # the user sets the number of weeks up front and the page shows progress
+    # against it (e.g. "week 5 of 12").
+    target_weeks: Mapped[int | None] = mapped_column()
     # The kcal/day adjustment the auto-coach has applied on top of the TDEE target.
     kcal_adjustment: Mapped[int] = mapped_column(default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)

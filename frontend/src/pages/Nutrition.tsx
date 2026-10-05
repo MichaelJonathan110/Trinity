@@ -8,7 +8,7 @@ import {
 import { IconPlus, IconStar } from '../components/icons'
 import { api } from '../lib/api'
 import { isoDate, num } from '../lib/format'
-import type { DayTotals, Food, TdeeResult } from '../lib/types'
+import type { DayTotals, Food, MealItem, TdeeResult } from '../lib/types'
 
 const CATEGORIES = [
   { value: 'breakfast', label: 'Breakfast' },
@@ -20,6 +20,15 @@ const CATEGORIES = [
 ]
 
 const SERVING_PRESETS = [50, 100, 150, 200, 250, 300]
+
+/** The name of a logged item, with an honest fallback when the food or recipe it
+    points at has since been deleted (we say which, rather than showing a blank). */
+function itemName(item: MealItem): string {
+  if (item.food_name) return item.food_name
+  if (item.recipe_id) return `Recipe #${item.recipe_id}`
+  if (item.food_id) return `Food #${item.food_id}`
+  return 'Logged item'
+}
 
 export default function NutritionPage() {
   const qc = useQueryClient()
@@ -298,9 +307,12 @@ export default function NutritionPage() {
                       {meal.items.map((item) => (
                         <li className="list-row" key={item.id}>
                           <div className="list-main">
-                            <span className="list-title">{num(item.quantity_g)} g</span>
+                            {/* Name first, weight second: what was eaten, then how much. */}
+                            <span className="list-title">{itemName(item)}</span>
                             <span className="list-meta">
-                              {num(item.protein_g)} P / {num(item.carbs_g)} C / {num(item.fat_g)} F
+                              {num(item.quantity_g)} g
+                              {item.serving_label ? ` - ${item.serving_label}` : ''}
+                              {' - '}{num(item.protein_g)} P / {num(item.carbs_g)} C / {num(item.fat_g)} F
                             </span>
                           </div>
                           <div className="row" style={{ alignItems: 'center' }}>

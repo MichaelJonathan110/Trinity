@@ -43,6 +43,10 @@ class MealItemOut(BaseModel):
     protein_g: float
     carbs_g: float
     fat_g: float
+    # Resolved from the food/recipe the item points at, so the UI can name what
+    # was eaten instead of showing only a gram figure. Filled in by the service
+    # when it serialises a meal; not a stored column.
+    food_name: str | None = None
 
 
 class MealIn(BaseModel):

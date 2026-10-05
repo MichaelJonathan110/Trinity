@@ -44,3 +44,7 @@ Thumbs.db
 
 # typescript build cache
 *.tsbuildinfo
+
+# local Neon/production connection strings (never commit)
+*.env.neon
+backend/.env.neon

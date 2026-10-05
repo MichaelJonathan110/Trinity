@@ -1,7 +1,7 @@
 """Preparation phase API: cut / bulk / recomp management (spec 66, 67)."""
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,22 @@ def read_phase(user: User = Depends(get_current_user), db: Session = Depends(get
     return {"active": True, **prep_service.status(db, user.id, phase)}
 
 
+@router.get("/weight-series")
+def weight_series(
+    granularity: str = Query(default="weekly", pattern="^(daily|weekly|monthly)$"),
+    months: int = Query(default=12, ge=1, le=36),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Bodyweight over time at daily, weekly or monthly resolution.
+
+    Daily shows the raw weigh-ins (noisy by design); weekly and monthly average
+    them, because a single day's weight moves with water, sodium and glycogen as
+    well as tissue. Only real weigh-ins are returned - gaps stay gaps.
+    """
+    return prep_service.weight_series(db, user.id, granularity, months)
+
+
 @router.post("/phase", response_model=PhaseOut, status_code=status.HTTP_201_CREATED)
 def start_phase(
     payload: PhaseIn, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -44,6 +60,7 @@ def start_phase(
         is_active=True, start_weight_kg=start_weight,
         target_weight_kg=payload.target_weight_kg,
         target_rate_pct_per_week=payload.target_rate_pct_per_week,
+        target_weeks=payload.target_weeks,
         notes=payload.notes,
     )
     db.add(phase)

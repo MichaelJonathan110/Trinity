@@ -41,6 +41,29 @@ const VOLUME_STATUS_LABEL: Record<string, string> = {
   above_mrv: 'Above recoverable', none: 'Not trained'
 }
 
+/* A personal record only means something if the user can read it at a glance.
+   Each type gets a plain name, the unit its number is in, and a one-line
+   explanation of what it measures - so "e1rm 112.5" becomes "Estimated 1RM -
+   112.5 kg", which is what the number actually is. */
+const PR_META: Record<string, { label: string; unit: string; explain: string }> = {
+  weight: {
+    label: 'Heaviest weight', unit: 'kg',
+    explain: 'The heaviest load you have lifted for any set of this exercise.'
+  },
+  e1rm: {
+    label: 'Estimated 1RM', unit: 'kg',
+    explain: 'Your best estimated one-rep max, worked out from the weight and reps you logged. An estimate, not a tested max.'
+  },
+  volume: {
+    label: 'Best session volume', unit: 'kg',
+    explain: 'The most total weight moved in a single session: every rep times its load, added up.'
+  },
+  reps: {
+    label: 'Most reps', unit: 'reps',
+    explain: 'The highest number of reps you have completed in one set of this exercise.'
+  }
+}
+
 const TABS: { value: Tab; label: string }[] = [
   { value: 'log', label: 'Log a workout' },
   { value: 'history', label: 'History' },
@@ -243,27 +266,7 @@ export default function ExercisePage() {
             </Card>
           ) : null}
 
-          {prs.data && prs.data.length > 0 ? (
-            <Card style={{ marginTop: 24 }}>
-              <h2 style={{ marginBottom: 12 }}>Personal records</h2>
-              <ul className="list">
-                {prs.data.slice(0, 12).map((pr) => (
-                  <li className="list-row" key={pr.id}>
-                    <div className="list-main">
-                      <span className="list-title">{exerciseById.get(pr.exercise_id) ?? `Exercise ${pr.exercise_id}`}</span>
-                      <span className="list-meta">{pr.record_type} - {shortDate(pr.achieved_on)}</span>
-                    </div>
-                    <span className="list-value">
-                      {pr.record_type === 'e1rm' ? `${num(pr.value, 1)} kg est. 1RM` : `${num(pr.value, 1)}`}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <p className="source-note" style={{ marginTop: 12 }}>
-                Estimated 1RM uses the Epley formula and is an estimate, not a tested maximum.
-              </p>
-            </Card>
-          ) : null}
+          <PersonalRecords prs={prs.data} isLoading={prs.isLoading} exerciseById={exerciseById} />
 
           <Card style={{ marginTop: 24 }}>
             <h2 style={{ marginBottom: 12 }}>Recent workouts</h2>
@@ -338,6 +341,87 @@ export default function ExercisePage() {
     await qc.invalidateQueries({ queryKey: ['programs'] })
     await qc.invalidateQueries({ queryKey: ['training'] })
   }
+}
+
+/** Personal records, grouped by exercise and written in plain language.
+ *
+ * The raw record_type (weight|e1rm|volume|reps) is jargon, so each record is
+ * shown as a name, its number with the right unit, what it means, and when it
+ * was set. Records are grouped under the exercise they belong to so a lifter
+ * can see all of their bests for a movement in one place. */
+function PersonalRecords({
+  prs, isLoading, exerciseById
+}: { prs?: PersonalRecord[]; isLoading: boolean; exerciseById: Map<number, string> }) {
+  if (isLoading) return <Card style={{ marginTop: 24 }}><LoadingState what="your personal records" /></Card>
+  if (!prs || prs.length === 0) {
+    return (
+      <Card style={{ marginTop: 24 }}>
+        <h2 style={{ marginBottom: 12 }}>Personal records</h2>
+        <EmptyState
+          title="No personal records yet"
+          body="Log a workout with weights and your bests appear here - heaviest set, best estimated 1RM and more, with the date you set them."
+        />
+      </Card>
+    )
+  }
+
+  // Group by exercise, keeping the most recently achieved record first inside
+  // each group so the newest achievement is what the eye lands on.
+  const groups = new Map<number, PersonalRecord[]>()
+  for (const pr of prs) {
+    const list = groups.get(pr.exercise_id) ?? []
+    list.push(pr)
+    groups.set(pr.exercise_id, list)
+  }
+  const ordered = [...groups.entries()]
+    .map(([id, list]) => ({
+      id,
+      name: list[0]?.exercise_name ?? exerciseById.get(id) ?? `Exercise ${id}`,
+      list: [...list].sort((a, b) => b.achieved_on.localeCompare(a.achieved_on))
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  return (
+    <Card style={{ marginTop: 24 }}>
+      <h2 style={{ marginBottom: 4 }}>Personal records</h2>
+      <p className="list-meta" style={{ marginBottom: 16 }}>
+        Your best result for each exercise, and the day you set it. These update automatically when you
+        log a session that beats them.
+      </p>
+      <div className="stack">
+        {ordered.map((group) => (
+          <div key={group.id}>
+            <h3 style={{ marginBottom: 8 }}>{group.name}</h3>
+            <ul className="list">
+              {group.list.map((pr) => {
+                const meta = PR_META[pr.record_type]
+                const label = pr.label ?? meta?.label ?? pr.record_type
+                const unit = pr.unit ?? meta?.unit ?? ''
+                return (
+                  <li className="list-row" key={pr.id}>
+                    <div className="list-main">
+                      <span className="list-title">{label}</span>
+                      <span className="list-meta">
+                        Set {shortDate(pr.achieved_on)}
+                        {pr.detail ?? (meta ? ` - ${meta.explain}` : '')}
+                      </span>
+                    </div>
+                    <span className="list-value">
+                      {num(pr.value, 1)}{unit ? ` ${unit}` : ''}
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+      <DataSourceNote>
+        Estimated 1RM uses the Epley formula and is an estimate, not a tested maximum. Records are kept
+        only when a session actually beats the stored best.
+      </DataSourceNote>
+    </Card>
+  )
 }
 
 function ExerciseDraft({

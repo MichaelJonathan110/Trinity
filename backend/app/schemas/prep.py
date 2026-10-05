@@ -13,12 +13,16 @@ class PhaseIn(BaseModel):
     target_weight_kg: float | None = Field(default=None, gt=20, lt=400)
     # Target rate as % of bodyweight per week, e.g. -0.5 for a cut, +0.35 for a lean bulk.
     target_rate_pct_per_week: float | None = Field(default=None, ge=-2, le=2)
+    # How long the phase is planned to run. A phase is a plan with a clock, so the
+    # user sets the number of weeks up front (e.g. a 12-week contest prep block).
+    target_weeks: int | None = Field(default=None, ge=1, le=104)
     notes: str | None = None
 
 
 class PhasePatch(BaseModel):
     target_weight_kg: float | None = Field(default=None, gt=20, lt=400)
     target_rate_pct_per_week: float | None = Field(default=None, ge=-2, le=2)
+    target_weeks: int | None = Field(default=None, ge=1, le=104)
     notes: str | None = None
 
 
@@ -32,6 +36,7 @@ class PhaseOut(BaseModel):
     start_weight_kg: float | None
     target_weight_kg: float | None
     target_rate_pct_per_week: float | None
+    target_weeks: int | None
     kcal_adjustment: int
     notes: str | None
 

@@ -31,6 +31,14 @@ const ACTIVITY_LEGEND = [
   { key: 'Very active', label: 'Daily training or physical work. BMR x 1.9.' }
 ]
 
+/* The tape measurements live on their own card; weight does not, because weight
+   and height are the two numbers the energy estimate is built from, so they are
+   entered together and saved by the same button. */
+const TAPE_KEYS = [
+  'body_fat_pct', 'waist_cm', 'neck_cm', 'shoulder_cm', 'chest_cm',
+  'arm_cm', 'forearm_cm', 'thigh_cm', 'hip_cm', 'calf_cm'
+] as const
+
 export default function AccountPage() {
   const qc = useQueryClient()
   const me = useAuth((s) => s.me)
@@ -42,39 +50,65 @@ export default function AccountPage() {
   const goals = useQuery({ queryKey: ['goals'], queryFn: () => api.get<Goal[]>('/profile/goals') })
   const metrics = useQuery({ queryKey: ['metrics'], queryFn: () => api.get<BodyMetric[]>('/profile/metrics') })
 
-  const [form, setForm] = useState({ display_name: '', birth_date: '', sex: '', height_cm: '', body_fat_pct: '', activity_level: '', units: 'metric' })
+  const [form, setForm] = useState({
+    display_name: '', birth_date: '', sex: '', height_cm: '', weight_kg: '',
+    body_fat_pct: '', activity_level: '', units: 'metric'
+  })
   const [metric, setMetric] = useState({
-    measured_on: isoDate(), weight_kg: '', body_fat_pct: '', waist_cm: '',
+    measured_on: isoDate(), body_fat_pct: '', waist_cm: '',
     neck_cm: '', shoulder_cm: '', chest_cm: '', arm_cm: '', forearm_cm: '',
     thigh_cm: '', hip_cm: '', calf_cm: ''
   })
 
   useEffect(() => {
-    if (profile.data) {
-      setForm({
-        display_name: profile.data.display_name ?? '',
-        birth_date: profile.data.birth_date ?? '',
-        sex: profile.data.sex ?? '',
-        height_cm: profile.data.height_cm?.toString() ?? '',
-        body_fat_pct: profile.data.body_fat_pct?.toString() ?? '',
-        activity_level: profile.data.activity_level ?? '',
-        units: profile.data.units ?? 'metric'
-      })
+    const p = profile.data
+    if (p) {
+      setForm((f) => ({
+        ...f,
+        display_name: p.display_name ?? '',
+        birth_date: p.birth_date ?? '',
+        sex: p.sex ?? '',
+        height_cm: p.height_cm?.toString() ?? '',
+        body_fat_pct: p.body_fat_pct?.toString() ?? '',
+        activity_level: p.activity_level ?? '',
+        units: p.units ?? 'metric'
+      }))
     }
   }, [profile.data])
 
+  /* Weight is not a profile column: it is a dated body metric. Seed the field from
+     the most recent weigh-in (metrics are newest-first) so the current weight is
+     visible and saving it again just updates today's entry. */
+  useEffect(() => {
+    const latest = metrics.data?.find((m) => m.weight_kg !== null)
+    if (!latest || latest.weight_kg === null) return
+    const value = String(latest.weight_kg)
+    setForm((f) => (f.weight_kg === '' ? { ...f, weight_kg: value } : f))
+  }, [metrics.data])
+
+  /* One save for the body numbers the energy estimate needs: height goes to the
+     profile, weight goes to today's body metric. */
   const saveProfile = useMutation({
-    mutationFn: () => api.patch('/profile', {
-      display_name: form.display_name || undefined,
-      birth_date: form.birth_date || undefined,
-      sex: form.sex || undefined,
-      height_cm: form.height_cm ? Number(form.height_cm) : undefined,
-      body_fat_pct: form.body_fat_pct ? Number(form.body_fat_pct) : undefined,
-      activity_level: form.activity_level || undefined,
-      units: form.units
-    }),
+    mutationFn: async () => {
+      await api.patch('/profile', {
+        display_name: form.display_name || undefined,
+        birth_date: form.birth_date || undefined,
+        sex: form.sex || undefined,
+        height_cm: form.height_cm ? Number(form.height_cm) : undefined,
+        body_fat_pct: form.body_fat_pct ? Number(form.body_fat_pct) : undefined,
+        activity_level: form.activity_level || undefined,
+        units: form.units
+      })
+      if (form.weight_kg.trim() !== '') {
+        await api.post('/profile/metrics', {
+          measured_on: isoDate(),
+          weight_kg: Number(form.weight_kg)
+        })
+      }
+    },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['profile'] })
+      await qc.invalidateQueries({ queryKey: ['metrics'] })
       await qc.invalidateQueries({ queryKey: ['tdee'] })
       await qc.invalidateQueries({ queryKey: ['today'] })
     }
@@ -83,7 +117,6 @@ export default function AccountPage() {
   const saveMetric = useMutation({
     mutationFn: () => api.post('/profile/metrics', {
       measured_on: metric.measured_on,
-      weight_kg: metric.weight_kg ? Number(metric.weight_kg) : undefined,
       body_fat_pct: metric.body_fat_pct ? Number(metric.body_fat_pct) : undefined,
       waist_cm: metric.waist_cm ? Number(metric.waist_cm) : undefined,
       neck_cm: metric.neck_cm ? Number(metric.neck_cm) : undefined,
@@ -100,7 +133,7 @@ export default function AccountPage() {
       await qc.invalidateQueries({ queryKey: ['tdee'] })
       await qc.invalidateQueries({ queryKey: ['today'] })
       setMetric({
-        measured_on: isoDate(), weight_kg: '', body_fat_pct: '', waist_cm: '',
+        measured_on: isoDate(), body_fat_pct: '', waist_cm: '',
         neck_cm: '', shoulder_cm: '', chest_cm: '', arm_cm: '', forearm_cm: '',
         thigh_cm: '', hip_cm: '', calf_cm: ''
       })
@@ -121,6 +154,7 @@ export default function AccountPage() {
     .map((m) => ({ x: shortDate(m.measured_on), y: m.weight_kg }))
 
   const activeGoal = goals.data?.find((g) => g.is_active)
+  const hasTapeInput = TAPE_KEYS.some((k) => metric[k] !== '')
 
   return (
     <>
@@ -150,7 +184,8 @@ export default function AccountPage() {
                   { value: 'unspecified', label: 'Prefer not to say' }
                 ]}
               />
-              <NumberField label="Height" value={form.height_cm} onChange={(v) => setForm({ ...form, height_cm: v })} min={100} max={250} hint="Centimetres" />
+              <NumberField label="Height" value={form.height_cm} onChange={(v) => setForm({ ...form, height_cm: v })} min={100} max={250} placeholder="178" hint="Centimetres" />
+              <NumberField label="Weight" value={form.weight_kg} onChange={(v) => setForm({ ...form, weight_kg: v })} min={20} max={400} placeholder="77.5" hint="Kilograms" />
               <NumberField label="Body fat" value={form.body_fat_pct} onChange={(v) => setForm({ ...form, body_fat_pct: v })} min={2} max={70} hint="Percent, optional" />
               <SelectField
                 label="Activity level" value={form.activity_level} onChange={(v) => setForm({ ...form, activity_level: v })}
@@ -164,6 +199,10 @@ export default function AccountPage() {
                 ]}
               />
             </div>
+            <p className="source-note" style={{ marginTop: 12 }}>
+              Height and weight are what your energy estimate is built from. Weight is saved as today's
+              weigh-in, so it also feeds the weight trend below.
+            </p>
             <div style={{ marginTop: 16 }}>
               <Legend title="What the activity levels mean" items={ACTIVITY_LEGEND}
                 note="Your activity level scales your BMR into a daily energy estimate." />
@@ -178,10 +217,13 @@ export default function AccountPage() {
           </Card>
 
           <Card style={{ marginTop: 24 }}>
-            <h2 style={{ marginBottom: 16 }}>Body metrics</h2>
+            <h2 style={{ marginBottom: 16 }}>Body measurements</h2>
+            <p className="list-meta" style={{ marginBottom: 16 }}>
+              Tape and body-fat readings, optional. They show shape change that the scale cannot; your
+              weight is entered in the profile card above.
+            </p>
             <div className="grid grid-2">
               <TextField label="Date" type="date" value={metric.measured_on} onChange={(v) => setMetric({ ...metric, measured_on: v })} />
-              <NumberField label="Weight" value={metric.weight_kg} onChange={(v) => setMetric({ ...metric, weight_kg: v })} min={20} max={400} placeholder="77.5" hint="Kilograms" />
               <NumberField label="Body fat" value={metric.body_fat_pct} onChange={(v) => setMetric({ ...metric, body_fat_pct: v })} min={2} max={70} placeholder="14.5" hint="Percent, optional" />
               <NumberField label="Waist" value={metric.waist_cm} onChange={(v) => setMetric({ ...metric, waist_cm: v })} min={40} max={200} placeholder="82" hint="Centimetres, optional" />
               <NumberField label="Neck" value={metric.neck_cm} onChange={(v) => setMetric({ ...metric, neck_cm: v })} min={15} max={80} placeholder="38" hint="cm, optional" />
@@ -194,7 +236,7 @@ export default function AccountPage() {
               <NumberField label="Calf" value={metric.calf_cm} onChange={(v) => setMetric({ ...metric, calf_cm: v })} min={15} max={80} placeholder="39" hint="cm, optional" />
             </div>
             <div className="row" style={{ marginTop: 16 }}>
-              <Button onClick={() => saveMetric.mutate()} disabled={saveMetric.isPending || metric.weight_kg === ''}>
+              <Button onClick={() => saveMetric.mutate()} disabled={saveMetric.isPending || !hasTapeInput}>
                 {saveMetric.isPending ? 'Saving...' : 'Save measurement'}
               </Button>
               {saveMetric.isSuccess ? <p className="form-ok">Measurement saved.</p> : null}
@@ -206,7 +248,7 @@ export default function AccountPage() {
               ) : metrics.data && metrics.data.length > 0 ? (
                 <p className="list-meta">One measurement recorded. A trend line needs at least two.</p>
               ) : (
-                <EmptyState title="No measurements yet" body="Record your weight to start tracking the trend over time." />
+                <EmptyState title="No measurements yet" body="Add your weight in the profile card above to start the trend over time." />
               )}
             </div>
 

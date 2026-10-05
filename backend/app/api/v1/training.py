@@ -18,6 +18,32 @@ from app.services import training_service, volume_service
 
 router = APIRouter(prefix="/training", tags=["training"])
 
+# How each stored record type is described to the user. The raw type is jargon
+# ("e1rm", "volume"), so every PR is sent with a plain label, its unit and a
+# one-line explanation - the API does the translation once, not each client.
+PR_META: dict[str, dict[str, str]] = {
+    "weight": {
+        "label": "Heaviest weight",
+        "unit": "kg",
+        "detail": "The heaviest load lifted for any set of this exercise.",
+    },
+    "e1rm": {
+        "label": "Estimated 1RM",
+        "unit": "kg",
+        "detail": "Best estimated one-rep max from the weight and reps logged. An estimate, not a tested max.",
+    },
+    "volume": {
+        "label": "Best session volume",
+        "unit": "kg",
+        "detail": "Most total weight moved in a single session: every rep times its load, added up.",
+    },
+    "reps": {
+        "label": "Most reps",
+        "unit": "reps",
+        "detail": "Highest number of reps completed in one set of this exercise.",
+    },
+}
+
 
 def _program_dict(p: TrainingProgram) -> dict:
     """One serialisation shape for a program, used by every program endpoint.
@@ -221,17 +247,44 @@ def yearly_summary(
 
 @router.get("/prs")
 def list_prs(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list:
-    rows = db.scalars(
-        select(PersonalRecord)
-        .where(PersonalRecord.user_id == user.id)
-        .order_by(PersonalRecord.achieved_on.desc())
+    """Personal records with the exercise name and a plain-language label.
+
+    Each record carries `exercise_name` and a `label`/`unit`/`detail` triple so a
+    client can render "Bench press - Estimated 1RM - 112.5 kg" without knowing
+    what `record_type` values exist or what they mean.
+    """
+    rows = list(
+        db.scalars(
+            select(PersonalRecord)
+            .where(PersonalRecord.user_id == user.id)
+            .order_by(PersonalRecord.achieved_on.desc())
+        )
     )
-    return [
-        {"id": r.id, "exercise_id": r.exercise_id, "record_type": r.record_type,
-         "value": float(r.value), "weight_kg": float(r.weight_kg) if r.weight_kg else None,
-         "reps": r.reps, "achieved_on": r.achieved_on.isoformat()}
-        for r in rows
-    ]
+    names = {
+        e.id: e.name
+        for e in db.scalars(
+            select(ExerciseLibrary).where(
+                ExerciseLibrary.id.in_({r.exercise_id for r in rows} or {-1})
+            )
+        )
+    }
+    out = []
+    for r in rows:
+        meta = PR_META.get(r.record_type, {})
+        out.append({
+            "id": r.id,
+            "exercise_id": r.exercise_id,
+            "exercise_name": names.get(r.exercise_id),
+            "record_type": r.record_type,
+            "label": meta.get("label", r.record_type),
+            "unit": meta.get("unit", ""),
+            "detail": meta.get("detail"),
+            "value": float(r.value),
+            "weight_kg": float(r.weight_kg) if r.weight_kg else None,
+            "reps": r.reps,
+            "achieved_on": r.achieved_on.isoformat(),
+        })
+    return out
 
 
 @router.get("/progression/{exercise_id}")

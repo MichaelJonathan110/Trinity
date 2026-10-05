@@ -85,6 +85,51 @@ def recipe_totals_for(db: Session, recipe: Recipe) -> dict:
     return recipe_totals(ingredients)
 
 
+def _resolve_item_names(db: Session, items: list[MealItem]) -> tuple[dict[int, str], dict[int, str]]:
+    """Look up the display name for every food/recipe referenced by `items`.
+
+    Batched into two queries rather than one per item, so a day with a dozen
+    entries still costs a constant number of round trips. A name that cannot be
+    resolved stays missing rather than being invented (spec 10-22).
+    """
+    food_ids = {i.food_id for i in items if i.food_id is not None}
+    recipe_ids = {i.recipe_id for i in items if i.recipe_id is not None}
+    foods: dict[int, str] = {}
+    recipes: dict[int, str] = {}
+    if food_ids:
+        foods = {f.id: f.name for f in db.scalars(select(Food).where(Food.id.in_(food_ids)))}
+    if recipe_ids:
+        recipes = {r.id: r.name for r in db.scalars(select(Recipe).where(Recipe.id.in_(recipe_ids)))}
+    return foods, recipes
+
+
+def _serialise_meal(meal: Meal, foods: dict[int, str], recipes: dict[int, str]) -> dict:
+    items = []
+    for i in meal.items:
+        name = foods.get(i.food_id) if i.food_id is not None else None
+        if name is None and i.recipe_id is not None:
+            name = recipes.get(i.recipe_id)
+        items.append({
+            "id": i.id,
+            "food_id": i.food_id,
+            "recipe_id": i.recipe_id,
+            "quantity_g": float(i.quantity_g),
+            "serving_label": i.serving_label,
+            "kcal": float(i.kcal),
+            "protein_g": float(i.protein_g),
+            "carbs_g": float(i.carbs_g),
+            "fat_g": float(i.fat_g),
+            "food_name": name,
+        })
+    return {
+        "id": meal.id,
+        "logged_on": meal.logged_on,
+        "category": meal.category,
+        "name": meal.name,
+        "items": items,
+    }
+
+
 def day_totals(db: Session, user_id: int, day: date) -> dict:
     meals = list(
         db.scalars(
@@ -102,13 +147,15 @@ def day_totals(db: Session, user_id: int, day: date) -> dict:
         .where(NutritionTarget.user_id == user_id, NutritionTarget.effective_from <= day)
         .order_by(NutritionTarget.effective_from.desc())
     )
+    every_item = [i for m in meals for i in m.items]
+    foods, recipes = _resolve_item_names(db, every_item)
     totals.update({
         "logged_on": day,
         "target_kcal": float(target.kcal) if target else None,
         "target_protein_g": float(target.protein_g) if target else None,
         "target_carbs_g": float(target.carbs_g) if target else None,
         "target_fat_g": float(target.fat_g) if target else None,
-        "meals": meals,
+        "meals": [_serialise_meal(m, foods, recipes) for m in meals],
     })
     return totals
 

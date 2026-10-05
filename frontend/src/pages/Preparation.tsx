@@ -10,12 +10,12 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Button, Card, Chip, DataSourceNote, EmptyState, ErrorState, Legend, LoadingState,
-  Metric, NumberField, SelectField, TextField
+  Metric, NumberField, Progress, Segmented, SelectField, TextField
 } from '../components/ui'
 import { LineChart } from '../components/charts'
 import { api } from '../lib/api'
 import { isoDate, kg, num, shortDate } from '../lib/format'
-import type { PreparationStatus, RefeedEntry } from '../lib/types'
+import type { PreparationStatus, RefeedEntry, WeightSeries } from '../lib/types'
 
 const PHASES = [
   { value: 'cut', label: 'Cut - lose fat' },
@@ -37,6 +37,14 @@ const VERDICT_TONE: Record<string, 'accent' | 'success' | 'warning' | 'danger' |
   on_plan: 'success', too_slow: 'warning', too_fast: 'warning', unknown: 'neutral'
 }
 
+type Granularity = 'daily' | 'weekly' | 'monthly'
+
+const GRANULARITY_OPTIONS: { value: Granularity; label: string }[] = [
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' }
+]
+
 export default function PreparationPage() {
   const qc = useQueryClient()
   const status = useQuery({
@@ -48,9 +56,16 @@ export default function PreparationPage() {
     queryFn: () => api.get<RefeedEntry[]>('/prep/refeeds')
   })
 
-  const [form, setForm] = useState({
-    phase_type: 'cut', target_weight_kg: '', target_rate_pct_per_week: '', notes: ''
+  const [granularity, setGranularity] = useState<Granularity>('weekly')
+  const series = useQuery({
+    queryKey: ['prep', 'weight-series', granularity],
+    queryFn: () => api.get<WeightSeries>(`/prep/weight-series?granularity=${granularity}&months=12`)
   })
+
+  const [form, setForm] = useState({
+    phase_type: 'cut', target_weight_kg: '', target_rate_pct_per_week: '', target_weeks: '', notes: ''
+  })
+  const [weighIn, setWeighIn] = useState({ measured_on: isoDate(), weight_kg: '' })
   const [refeed, setRefeed] = useState({ occurred_on: isoDate(), kind: 'refeed', days: '1', notes: '' })
 
   // Prefill the rate box with the phase's default whenever the phase changes, so
@@ -66,9 +81,22 @@ export default function PreparationPage() {
       target_weight_kg: form.target_weight_kg ? Number(form.target_weight_kg) : undefined,
       target_rate_pct_per_week: form.target_rate_pct_per_week !== ''
         ? Number(form.target_rate_pct_per_week) : undefined,
+      target_weeks: form.target_weeks ? Number(form.target_weeks) : undefined,
       notes: form.notes.trim() || undefined
     }),
     onSuccess: async () => { await qc.invalidateQueries({ queryKey: ['prep'] }) }
+  })
+
+  const logWeight = useMutation({
+    mutationFn: () => api.post('/profile/metrics', {
+      measured_on: weighIn.measured_on,
+      weight_kg: Number(weighIn.weight_kg)
+    }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['prep'] })
+      await qc.invalidateQueries({ queryKey: ['prep', 'weight-series'] })
+      setWeighIn({ measured_on: isoDate(), weight_kg: '' })
+    }
   })
 
   const accept = useMutation({
@@ -96,14 +124,16 @@ export default function PreparationPage() {
 
   const data = status.data
   const active = data?.active && data.phase
-  const weekly = (data?.weekly_averages ?? []).map((w) => ({ x: shortDate(w.week_start), y: w.avg_kg }))
+  const targetWeeks = data?.phase?.target_weeks ?? null
+  const points = (series.data?.points ?? []).map((p) => ({ x: shortDate(p.date), y: p.value }))
 
   return (
     <>
       <header className="page-head">
         <h1>Preparation</h1>
         <p className="page-sub">
-          Run a cut, bulk or recomp against a target rate, judged on weekly average bodyweight.
+          Run a cut, bulk or recomp against a target rate and a target number of weeks, judged on
+          weekly average bodyweight.
         </p>
       </header>
 
@@ -133,12 +163,37 @@ export default function PreparationPage() {
                 <h2 style={{ textTransform: 'capitalize' }}>{data.phase.phase_type}</h2>
                 <p className="list-meta">
                   Started {shortDate(data.phase.started_on)} - week {data.phase.weeks_on_phase + 1}
+                  {targetWeeks ? ` of ${targetWeeks}` : ''}
+                  {data.planned_end_on ? ` (finish about ${shortDate(data.planned_end_on)})` : ''}
                 </p>
               </div>
               <Chip tone={VERDICT_TONE[data.verdict?.verdict ?? 'unknown'] ?? 'neutral'}>
                 {data.verdict?.label ?? 'Not enough data yet'}
               </Chip>
             </div>
+
+            {targetWeeks ? (
+              <div style={{ marginTop: 16 }}>
+                <Progress
+                  label={`Plan progress - week ${data.phase.weeks_on_phase} of ${targetWeeks}`}
+                  value={data.phase.weeks_on_phase} max={targetWeeks} showPct
+                />
+                <p className="list-meta" style={{ marginTop: 8 }}>
+                  {data.weeks_remaining && data.weeks_remaining > 0
+                    ? `${data.weeks_remaining} ${data.weeks_remaining === 1 ? 'week' : 'weeks'} left on the plan.`
+                    : 'The planned number of weeks has been reached.'}
+                  {data.projected_finish_kg !== null && data.projected_finish_kg !== undefined
+                    ? ` At the current rate you would finish around ${num(data.projected_finish_kg, 1)} kg.`
+                    : ''}
+                  {data.on_track === true ? ' That lands on your target.'
+                    : data.on_track === false ? ' That is off your target weight.' : ''}
+                </p>
+              </div>
+            ) : (
+              <p className="list-meta" style={{ marginTop: 12 }}>
+                No target duration set. Add one below to see how far through the plan you are.
+              </p>
+            )}
 
             <div className="stat-row">
               <div className="stat">
@@ -176,19 +231,67 @@ export default function PreparationPage() {
           </Card>
 
           <Card style={{ marginTop: 24 }}>
-            <h2 style={{ marginBottom: 12 }}>Weekly average bodyweight</h2>
-            {weekly.length >= 2 ? (
-              <LineChart points={weekly} label="Weekly average weight" unit=" kg" formatValue={(v) => v.toFixed(1)} />
-            ) : (
-              <EmptyState
-                title="Not enough weeks yet"
-                body="A rate needs at least two weekly averages before it means anything. Keep logging your weight and it appears here."
+            <h2 style={{ marginBottom: 12 }}>Log a weigh-in</h2>
+            <p className="state-body" style={{ marginBottom: 12 }}>
+              Weigh in on the same days each week - first thing in the morning, before eating - so the
+              weekly averages compare like with like. Every weigh-in you add appears in the chart below.
+            </p>
+            <div className="grid grid-2">
+              <TextField
+                label="Date" type="date" value={weighIn.measured_on}
+                onChange={(v) => setWeighIn({ ...weighIn, measured_on: v })}
               />
-            )}
-            <DataSourceNote>
-              Daily weight swings with water, sodium, glycogen and gut content. Only the trend of
-              weekly averages shows what is actually changing, so a single weigh-in is never used here.
-            </DataSourceNote>
+              <NumberField
+                label="Weight" value={weighIn.weight_kg}
+                onChange={(v) => setWeighIn({ ...weighIn, weight_kg: v })}
+                min={20} max={400} placeholder="82.4" hint="Kilograms"
+              />
+            </div>
+            <div className="row" style={{ marginTop: 16 }}>
+              <Button onClick={() => logWeight.mutate()} disabled={logWeight.isPending || !weighIn.weight_kg}>
+                {logWeight.isPending ? 'Saving...' : 'Save weigh-in'}
+              </Button>
+              {logWeight.isSuccess ? <p className="form-ok">Weigh-in saved.</p> : null}
+              {logWeight.isError ? (
+                <p className="form-error">
+                  {logWeight.error instanceof Error ? logWeight.error.message : 'Could not save'}
+                </p>
+              ) : null}
+            </div>
+          </Card>
+
+          <Card style={{ marginTop: 24 }}>
+            <div className="section-title">
+              <h2>Bodyweight trend</h2>
+              <Segmented
+                label="Weight chart resolution" value={granularity}
+                onChange={setGranularity} options={GRANULARITY_OPTIONS}
+              />
+            </div>
+            {series.isLoading ? <LoadingState what="your weight history" /> : null}
+            {series.data && series.data.count >= 2 ? (
+              <>
+                <LineChart
+                  points={points}
+                  label={`${granularity === 'daily' ? 'Daily weight' : granularity === 'weekly' ? 'Weekly average weight' : 'Monthly average weight'}`}
+                  unit=" kg" formatValue={(v) => v.toFixed(1)}
+                />
+                {series.data.change_kg !== null ? (
+                  <p className="list-meta" style={{ marginTop: 8 }}>
+                    {series.data.change_kg > 0 ? 'Up' : 'Down'} {num(Math.abs(series.data.change_kg), 1)} kg
+                    over the last {series.data.months} months ({num(series.data.first_kg, 1)} kg to{' '}
+                    {num(series.data.latest_kg, 1)} kg).
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+            {series.data && series.data.count < 2 ? (
+              <EmptyState
+                title="Not enough weigh-ins yet"
+                body="Log at least two weigh-ins and your trend appears here. The chart needs two points before a line means anything."
+              />
+            ) : null}
+            <DataSourceNote>{series.data?.note ?? 'Only real weigh-ins are shown; days with no entry are left out rather than filled in.'}</DataSourceNote>
           </Card>
 
           {data.suggestion ? (
@@ -245,6 +348,7 @@ export default function PreparationPage() {
             </div>
             <p className="list-meta">
               Target weight: {data.phase.target_weight_kg !== null ? kg(data.phase.target_weight_kg) : 'not set'}
+              {targetWeeks ? ` - Target duration: ${targetWeeks} weeks` : ''}
               {data.phase.notes ? ` - ${data.phase.notes}` : ''}
             </p>
             <div style={{ marginTop: 16 }}>
@@ -273,6 +377,12 @@ export default function PreparationPage() {
             onChange={(v) => setForm({ ...form, target_rate_pct_per_week: v })}
             min={-2} max={2} step="0.05" placeholder="-0.7"
             hint="% of bodyweight per week (negative to lose)"
+          />
+          <NumberField
+            label="Target duration" value={form.target_weeks}
+            onChange={(v) => setForm({ ...form, target_weeks: v })}
+            min={1} max={104} placeholder="12"
+            hint="Weeks (e.g. a 12-week prep block)"
           />
           <TextField
             label="Notes" value={form.notes}

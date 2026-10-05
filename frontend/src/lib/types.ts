@@ -33,10 +33,13 @@ export interface Food {
   data_quality: string; source_ref: string | null
 }
 
+/** One logged item. `food_name` is resolved from the food/recipe it points at so
+    the UI can name what was eaten, not just show a gram figure. */
 export interface MealItem {
   id: number; food_id: number | null; recipe_id: number | null
   quantity_g: number; serving_label: string | null
   kcal: number; protein_g: number; carbs_g: number; fat_g: number
+  food_name?: string | null
 }
 
 export interface Meal {
@@ -139,9 +142,15 @@ export interface TrainingSummary {
   rest_days: number; consistency_pct: number | null; avg_per_week: number
 }
 
+/** A personal record. The backend enriches it with the exercise name and a plain
+    label/unit so the UI never has to guess what a raw record_type means. */
 export interface PersonalRecord {
   id: number; exercise_id: number; record_type: string; value: number
   weight_kg: number | null; reps: number | null; achieved_on: string
+  exercise_name?: string | null
+  label?: string | null
+  unit?: string | null
+  detail?: string | null
 }
 
 export interface ProgressionPoint {
@@ -152,7 +161,8 @@ export interface ProgressionPoint {
 export interface PrepPhase {
   id: number; phase_type: string; started_on: string; weeks_on_phase: number
   start_weight_kg: number | null; target_weight_kg: number | null
-  target_rate_pct_per_week: number | null; kcal_adjustment: number; notes: string | null
+  target_rate_pct_per_week: number | null; target_weeks?: number | null
+  kcal_adjustment: number; notes: string | null
 }
 
 export interface WeeklyAverage { week_start: string; avg_kg: number; n: number }
@@ -175,9 +185,27 @@ export interface PreparationStatus {
   weekly_averages?: WeeklyAverage[]
   actual_kg_per_week?: number | null
   actual_pct_per_week?: number | null
+  planned_end_on?: string | null
+  weeks_remaining?: number | null
+  progress_pct?: number | null
+  projected_finish_kg?: number | null
+  on_track?: boolean | null
   verdict?: PhaseVerdict
   suggestion?: PhaseSuggestion
   refeed_due?: RefeedSuggestion | null
+}
+
+/** Bodyweight over time at daily, weekly or monthly resolution. Points are real
+    weigh-ins (or their averages); days with no entry are left out, not filled. */
+export interface WeightSeries {
+  granularity: 'daily' | 'weekly' | 'monthly'
+  months: number
+  points: { date: string; value: number; n: number }[]
+  count: number
+  first_kg: number | null
+  latest_kg: number | null
+  change_kg: number | null
+  note: string
 }
 
 export interface RefeedEntry {
